@@ -4,9 +4,14 @@
 # {19971213-1433}
 # {wagne@kth.se}
 
+import random
 from dubins import *
 import numpy as np
 import math
+
+PHI_OPTIONS = [-math.pi/4, 0, math.pi/4]
+
+EPSILON = 10**-2
 
 
 def solution(car):
@@ -48,3 +53,42 @@ def has_collision(car: Car, x, y):
 def is_within_obstacle(obs, x, y):
     x_obs, y_obs, r_obs = obs
     return math.sqrt((x_obs - x)**2 + (y_obs - y)**2) < r_obs
+
+
+def target_distance(car: Car, x, y):
+    return math.sqrt((car.xt - x)**2 + (car.yt - y)**2)
+
+
+def is_at_target(car: Car, x, y):
+    THRESHOLD = 1.5
+    return target_distance(car, x, y) < THRESHOLD
+
+
+def get_sample(car: Car):
+    # TODO: add bias towards goal
+    x = random.random() * (car.xub - car.xlb) + car.xlb
+    y = random.random() * (car.yub - car.ylb) + car.ylb
+    return x, y
+
+
+def RRT(car: Car):
+    # initial state
+    x, y = car.x0, car.y0
+    theta = 0
+
+    edges = []
+    nodes = [(x, y, theta)]
+    while True:
+        x_s, y_s = get_sample(car)
+        i_n = find_nearest_point(edges, nodes, x_s, y_s)
+        c_n = get_controls(*nodes[i_n], x_s, y_s)
+        # TODO: check if controls are possible
+        # TODO: add node and edge
+
+
+def find_nearest_point(edges, points, x_s, y_s):
+    raise NotImplementedError()
+
+
+def get_controls(x_n, y_n, theta_n, x_s, y_s):
+    raise NotImplementedError()
