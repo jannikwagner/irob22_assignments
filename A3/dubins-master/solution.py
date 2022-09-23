@@ -14,7 +14,7 @@ PHI_MAX = math.pi/4
 PHI_OPTIONS = [PHI_MIN, 0, PHI_MAX]
 
 EPSILON = 10**-2
-STEPSIZE = 0.1
+STEPSIZE = 0.01
 
 V = 0.01
 V_ANG = 0.01
@@ -83,26 +83,28 @@ def RRT(car: Car):
 
     while True:
         x_s, y_s, theta_s = get_sample(car)
-        print("SAMPLE: ", x_s, y_s, theta_s)
         i_c = find_closest_point(nodes, x_s, y_s, theta_s)
 
         x, y, theta = nodes[i_c]
-        print("CLOSEST: ", x, y, theta)
-        tcontrols, x, y, theta = local_planner(
-            car, x, y, theta, x_s, y_s, theta_s)
-
-        print("LOCAL PLAN: ", tcontrols, x, y, theta)
-
-        if tcontrols is False:
+        success, local_plan, x_n, y_n, theta_n = local_planner(
+            car, x, y, theta, x_s, y_s, theta_s, PHI_MIN)  # turn right
+        if not success:
+            success, local_plan, x_n, y_n, theta_n = local_planner(
+                car, x, y, theta, x_s, y_s, theta_s, PHI_MAX)  # turn left
+        if not success:
             continue
+        tcontrols, x, y, theta = local_plan, x_n, y_n, theta_n
+
+        print("SAMPLE: ", x_s, y_s, theta_s)
+        print("CLOSEST: ", i_c, x, y, theta)
+        print("LOCAL PLAN: ", tcontrols, x, y, theta)
 
         # new_tcontrols, x, y, theta = apply_controls_1(
         #     car, x, y, theta, tcontrols)
-        new_tcontrols = tcontrols
+        # new_tcontrols = tcontrols
 
-        # print(new_tcontrols, x, y, theta)
         nodes.append((x, y, theta))
-        edges.append((i_c, new_tcontrols))
+        edges.append((i_c, tcontrols))
 
         if is_at_target(car, x, y):
             return nodes, edges
@@ -111,7 +113,7 @@ def RRT(car: Car):
 def graph_to_solution(edges):
     parent = len(edges)-1
     tcontrols = []
-    while parent is not None:
+    while parent != 0:
         edge = edges[parent]
         parent, edge_controls = edge
         tcontrols = edge_controls + tcontrols
@@ -186,11 +188,10 @@ def find_closest_point(nodes, x_s, y_s, theta_s):
     return min(distances, key=lambda x: distances[x])
 
 
-def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
+def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s, phi):
     x, y, theta = x_c, y_c, theta_c
     alpha_old = -math.inf
     alpha_has_decreased_before = False
-    phi = PHI_MIN
 
     dt = 0
 
@@ -201,7 +202,7 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
         alpha = angle(current_direction, diff_vec)
 
         if is_illegal(car, x, y):
-            return False, x, y, theta
+            return False, [(phi, dt)], x, y, theta
 
         if alpha_has_decreased_before and alpha > alpha_old:
             break
@@ -212,14 +213,14 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
         alpha_old = alpha
     tcontrols = [(phi, dt)]
 
-    dist_old = -math.inf
+    dist_old = math.inf
     dt = 0
     while True:
         x, y, theta = step(car, x, y, theta, 0, STEPSIZE)
         dist = distance((x, y), (x_s, y_s))
 
         if is_illegal(car, x, y):
-            return False, x, y, theta
+            return False, tcontrols + [(0, dt)], x, y, theta
 
         if dist > dist_old:
             break
@@ -228,7 +229,7 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
         dist_old = dist
     tcontrols.append((0, dt))
 
-    return tcontrols, x, y, theta
+    return True, tcontrols, x, y, theta
 
 
 def dot(v1, v2):
