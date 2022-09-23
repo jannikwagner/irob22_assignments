@@ -14,10 +14,11 @@ PHI_MAX = math.pi/4
 PHI_OPTIONS = [PHI_MIN, 0, PHI_MAX]
 
 EPSILON = 10**-2
+STEPSIZE = 0.1
 
 V = 0.01
 V_ANG = 0.01
-T_ROT = math.pi*2*100
+T_ROT = math.pi*2
 
 
 def solution(car):
@@ -25,7 +26,7 @@ def solution(car):
 
     nodes, edges = RRT(car)
     tcontrols = graph_to_solution(edges)
-    controls, times = get_controls_and_times(tcontrols)
+    controls, times = tcontrols_to_controls(tcontrols)
 
     ''' <<< write your code below >>> '''
 
@@ -82,12 +83,22 @@ def RRT(car: Car):
 
     while True:
         x_s, y_s, theta_s = get_sample(car)
+        print("SAMPLE: ", x_s, y_s, theta_s)
         i_c = find_closest_point(nodes, x_s, y_s, theta_s)
-        tcontrols = get_controls(*nodes[i_c], x_s, y_s, theta_s)
 
         x, y, theta = nodes[i_c]
-        new_tcontrols, x, y, theta = apply_controls_1(
-            car, x, y, theta, tcontrols)
+        print("CLOSEST: ", x, y, theta)
+        tcontrols, x, y, theta = local_planner(
+            car, x, y, theta, x_s, y_s, theta_s)
+
+        print("LOCAL PLAN: ", tcontrols, x, y, theta)
+
+        if tcontrols is False:
+            continue
+
+        # new_tcontrols, x, y, theta = apply_controls_1(
+        #     car, x, y, theta, tcontrols)
+        new_tcontrols = tcontrols
 
         # print(new_tcontrols, x, y, theta)
         nodes.append((x, y, theta))
@@ -107,7 +118,7 @@ def graph_to_solution(edges):
     return tcontrols
 
 
-def get_controls_and_times(tcontrols):
+def tcontrols_to_controls(tcontrols):
     time = 0
     times = [0]
     controls = []
@@ -122,11 +133,11 @@ def apply_controls_1(car: Car, x, y, theta, tcontrols):
     new_tcontrols = []
     stop_flag = False
     for phi, t in tcontrols:
-        for i in range(round(100*t)):
-            x, y, theta = step(car, x, y, theta, phi)
+        for i in range(round(t/STEPSIZE)):
+            x, y, theta = step(car, x, y, theta, phi, STEPSIZE)
             if is_illegal(car, x, y):  # TODO: add safety margin
                 stop_flag = True
-                new_tcontrols.append((phi, (i+1)/100))
+                new_tcontrols.append((phi, (i+1)*STEPSIZE))
                 break
         if stop_flag:
             break
@@ -138,7 +149,7 @@ def apply_controls_2(car: Car, x, y, theta, tcontrols):
     new_flat_controls = []
     flat_controls = flatten_tcontrols(tcontrols)
     for phi in flat_controls:
-        x, y, theta = step(car, x, y, theta, phi)
+        x, y, theta = step(car, x, y, theta, phi, STEPSIZE)
         if is_illegal(car, x, y):  # TODO: add safety margin
             new_flat_controls.append(phi)
             break
@@ -149,7 +160,7 @@ def apply_controls_2(car: Car, x, y, theta, tcontrols):
 def flatten_tcontrols(tcontrols):
     flat_controls = []
     for phi, t in tcontrols:
-        new_controls += [phi] * round(t*100)
+        new_controls += [phi] * round(t/STEPSIZE)
     return flat_controls
 
 
@@ -161,10 +172,10 @@ def unflatten_tcontrols(flat_controls):
         if phi == previos_phi:
             counter += 1
         else:
-            tcontrols.append((previos_phi, counter/100))
+            tcontrols.append((previos_phi, counter*STEPSIZE))
             counter = 1
             previos_phi = phi
-    tcontrols.append((previos_phi, counter/100))
+    tcontrols.append((previos_phi, counter*STEPSIZE))
     return tcontrols
 
 
@@ -175,22 +186,69 @@ def find_closest_point(nodes, x_s, y_s, theta_s):
     return min(distances, key=lambda x: distances[x])
 
 
-def get_controls(x_c, y_c, theta_c, x_s, y_s, theta_s):
-    raise NotImplementedError()
-    phi1, t1 = PHI_MAX, 1
-    phi2, t2 = 0, 1
-    phi3, t3 = PHI_MIN, 1
+def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
+    x, y, theta = x_c, y_c, theta_c
+    alpha_old = -math.inf
+    alpha_has_decreased_before = False
+    phi = PHI_MIN
 
-    return (phi1, t1), (phi2, t2), (phi3, t3)
+    dt = 0
+
+    while True:
+        x, y, theta = step(car, x, y, theta, phi, STEPSIZE)
+        current_direction = (math.cos(theta), math.sin(theta))
+        diff_vec = (x_s - x, y_s - y)
+        alpha = angle(current_direction, diff_vec)
+
+        if is_illegal(car, x, y):
+            return False, x, y, theta
+
+        if alpha_has_decreased_before and alpha > alpha_old:
+            break
+        if alpha < alpha_old:
+            alpha_has_decreased_before = True
+
+        dt += STEPSIZE
+        alpha_old = alpha
+    tcontrols = [(phi, dt)]
+
+    dist_old = -math.inf
+    dt = 0
+    while True:
+        x, y, theta = step(car, x, y, theta, 0, STEPSIZE)
+        dist = distance((x, y), (x_s, y_s))
+
+        if is_illegal(car, x, y):
+            return False, x, y, theta
+
+        if dist > dist_old:
+            break
+
+        dt += STEPSIZE
+        dist_old = dist
+    tcontrols.append((0, dt))
+
+    return tcontrols, x, y, theta
 
 
-def get_controls_2(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s):
-    raise NotImplementedError()
-    phi1, t1 = PHI_MAX, 1
-    phi2, t2 = 0, 1
-    phi3, t3 = PHI_MIN, 1
+def dot(v1, v2):
+    return v1[0]*v2[0] + v1[1]*v2[1]
 
-    return (phi1, t1), (phi2, t2), (phi3, t3)
+
+def length(v):
+    return math.sqrt(dot(v, v))
+
+
+def angle(v1, v2):
+    return math.acos(dot(v1, v2) / length(v1) / length(v2))
+
+
+def difference_vector(p1, p2):
+    return (p2[0]-p1[0], p2[1]-p2[1])
+
+
+def distance(p1, p2):
+    return length(difference_vector(p1, p2))
 
 
 def fin_out_v():
@@ -213,7 +271,7 @@ def fin_out_v():
 
     V = 0.01
     V_ANG = 0.01
-    T_ROT = math.pi*2*100
+    T_ROT = math.pi*2/STEPSIZE
 
 
 if __name__ == "__main__":
