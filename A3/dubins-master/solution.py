@@ -6,19 +6,20 @@
 
 import random
 from dubins import *
-import numpy as np
 import math
 
 PHI_MIN = -math.pi/4
 PHI_MAX = math.pi/4
 PHI_OPTIONS = [PHI_MIN, 0, PHI_MAX]
-
-EPSILON = 10**-2
-STEPSIZE = 0.01
+PHI_RIGHT_LEFT = [PHI_MIN, PHI_MAX]
 
 V = 0.01
 V_ANG = 0.01
 T_ROT = math.pi*2
+
+EPSILON = 10**-2
+STEPSIZE = 0.01
+SAFETY_MARGIN = 0.15
 
 
 def solution(car):
@@ -33,21 +34,37 @@ def solution(car):
     return controls, times
 
 
-def is_illegal(car: Car, x, y):
-    return is_outside(car, x, y) or has_collision(car, x, y)
+def is_illegal(car: Car, x, y, safety_margin):
+    return is_outside(car, x, y, safety_margin) or has_collision(car, x, y, safety_margin)
 
 
-def is_outside(car: Car, x, y):
-    return not (car.xlb <= x <= car.xub and car.ylb <= y <= car.yub)
+def is_outside(car: Car, x, y, safety_margin):
+    return not (car.xlb+safety_margin <= x <= car.xub-safety_margin and car.ylb+safety_margin <= y <= car.yub-safety_margin)
 
 
-def has_collision(car: Car, x, y):
-    return any(is_within_obstacle(obs, x, y) for obs in car.obs)
+def distance_to_wall(car, x, y):
+    val = min([x-car.xlb, car.xub-x, y-car.ylb, car.yub-y])
+    return val
 
 
-def is_within_obstacle(obs, x, y):
+def distance_to_obstacles(car, x, y):
+    val = min(euclidean(x_obs, y_obs, x, y) - r_obs
+              for (x_obs, y_obs, r_obs) in car.obs)
+
+    return val
+
+
+def distance_to_illegal(car, x, y):
+    return min([distance_to_wall(car, x, y), distance_to_obstacles(car, x, y)])
+
+
+def has_collision(car: Car, x, y, safety_margin):
+    return any(is_within_obstacle(obs, x, y, safety_margin) for obs in car.obs)
+
+
+def is_within_obstacle(obs, x, y, saftey_margin):
     x_obs, y_obs, r_obs = obs
-    return math.sqrt((x_obs - x)**2 + (y_obs - y)**2) < r_obs
+    return euclidean(x, y, x_obs, y_obs) < r_obs + saftey_margin
 
 
 def target_distance(car: Car, x, y):
@@ -86,22 +103,22 @@ def RRT(car: Car):
         i_c = find_closest_point(nodes, x_s, y_s, theta_s)
 
         x, y, theta = nodes[i_c]
+
+        go_left_first = random.random() < 0.5
+        phi = PHI_MAX if go_left_first else PHI_MIN  # turn onw way
         success, local_plan, x_n, y_n, theta_n = local_planner(
-            car, x, y, theta, x_s, y_s, theta_s, PHI_MIN)  # turn right
+            car, x, y, theta, x_s, y_s, theta_s, phi)
         if not success:
+            phi = PHI_MAX if not go_left_first else PHI_MIN  # turn the other way
             success, local_plan, x_n, y_n, theta_n = local_planner(
-                car, x, y, theta, x_s, y_s, theta_s, PHI_MAX)  # turn left
+                car, x, y, theta, x_s, y_s, theta_s, phi)
         if not success:
             continue
         tcontrols, x, y, theta = local_plan, x_n, y_n, theta_n
 
-        print("SAMPLE: ", x_s, y_s, theta_s)
-        print("CLOSEST: ", i_c, x, y, theta)
-        print("LOCAL PLAN: ", tcontrols, x, y, theta)
-
-        # new_tcontrols, x, y, theta = apply_controls_1(
-        #     car, x, y, theta, tcontrols)
-        # new_tcontrols = tcontrols
+        # print("SAMPLE: ", x_s, y_s, theta_s)
+        # print("CLOSEST: ", i_c, x, y, theta)
+        # print("LOCAL PLAN: ", tcontrols, x, y, theta)
 
         nodes.append((x, y, theta))
         edges.append((i_c, tcontrols))
@@ -183,6 +200,7 @@ def unflatten_tcontrols(flat_controls):
 
 def find_closest_point(nodes, x_s, y_s, theta_s):
     # TODO: make more efficient, e.g. kdtrees
+    # TODO: consider angle as well
     distances = {i: euclidean(nodes[i][0], nodes[i][1], x_s, y_s)
                  for i in range(len(nodes))}
     return min(distances, key=lambda x: distances[x])
@@ -192,6 +210,8 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s, phi):
     x, y, theta = x_c, y_c, theta_c
     alpha_old = -math.inf
     alpha_has_decreased_before = False
+    dist_to_illegal = distance_to_illegal(car, x, y)
+    safety_margin = min(dist_to_illegal, SAFETY_MARGIN)
 
     dt = 0
 
@@ -201,7 +221,7 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s, phi):
         diff_vec = (x_s - x, y_s - y)
         alpha = angle(current_direction, diff_vec)
 
-        if is_illegal(car, x, y):
+        if is_illegal(car, x, y, safety_margin):
             return False, [(phi, dt)], x, y, theta
 
         if alpha_has_decreased_before and alpha > alpha_old:
@@ -219,7 +239,7 @@ def local_planner(car: Car, x_c, y_c, theta_c, x_s, y_s, theta_s, phi):
         x, y, theta = step(car, x, y, theta, 0, STEPSIZE)
         dist = distance((x, y), (x_s, y_s))
 
-        if is_illegal(car, x, y):
+        if is_illegal(car, x, y, safety_margin):
             return False, tcontrols + [(0, dt)], x, y, theta
 
         if dist > dist_old:
